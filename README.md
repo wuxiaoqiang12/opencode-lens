@@ -81,13 +81,14 @@ and fall back to:
 
 ## Install From npm
 
-Install the opencode TUI plugin and MCP server from npm:
+There are two separate install surfaces:
 
-```bash
-npm install -g opencode-lens opencode-lens-mcp
-```
+- `opencode-lens` is an opencode TUI plugin. opencode can install/cache it automatically from npm when it sees the package name in the TUI config.
+- `opencode-lens-mcp` is a stdio MCP server. Install or run it from the environment where Hermes starts MCP servers.
 
-Register the TUI plugin in `~/.config/opencode/tui.json`:
+### opencode TUI plugin
+
+Add the npm package name to `~/.config/opencode/tui.json`:
 
 ```json
 {
@@ -96,9 +97,37 @@ Register the TUI plugin in `~/.config/opencode/tui.json`:
 }
 ```
 
-Restart opencode after changing the TUI plugin configuration.
+Restart opencode. opencode will resolve and cache the npm plugin package for the TUI runtime.
 
-Configure Hermes MCP:
+You can also install the plugin manually, but this is usually unnecessary for normal opencode plugin usage:
+
+```bash
+npm install -g opencode-lens
+```
+
+### Hermes MCP server
+
+For Hermes, either run the MCP server through `npx`:
+
+```yaml
+mcp_servers:
+  opencode-lens:
+    command: npx
+    args:
+      - -y
+      - opencode-lens-mcp
+    enabled: true
+    timeout: 30
+    connect_timeout: 10
+```
+
+or install it globally:
+
+```bash
+npm install -g opencode-lens-mcp
+```
+
+and configure Hermes with the installed binary:
 
 ```yaml
 mcp_servers:
@@ -110,6 +139,21 @@ mcp_servers:
 ```
 
 Restart Hermes after installing or updating the MCP package so the tool list is reloaded.
+
+If you want both npm packages installed globally for local development, use:
+
+```bash
+npm install -g opencode-lens opencode-lens-mcp
+```
+
+The opencode TUI plugin still needs to be registered in `tui.json` even when globally installed:
+
+```json
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": ["opencode-lens"]
+}
+```
 
 ## Verify npm Packages
 
