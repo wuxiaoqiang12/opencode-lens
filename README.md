@@ -79,6 +79,68 @@ and fall back to:
 - opencode with TUI plugin support
 - Hermes or another MCP client if you want MCP automation
 
+## Install From npm
+
+Install the opencode TUI plugin and MCP server from npm:
+
+```bash
+npm install -g opencode-lens opencode-lens-mcp
+```
+
+Register the TUI plugin in `~/.config/opencode/tui.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/tui.json",
+  "plugin": ["opencode-lens"]
+}
+```
+
+Restart opencode after changing the TUI plugin configuration.
+
+Configure Hermes MCP:
+
+```yaml
+mcp_servers:
+  opencode-lens:
+    command: opencode-lens-mcp
+    enabled: true
+    timeout: 30
+    connect_timeout: 10
+```
+
+Restart Hermes after installing or updating the MCP package so the tool list is reloaded.
+
+## Verify npm Packages
+
+Check the published package metadata:
+
+```bash
+npm view opencode-lens version dist.tarball --registry=https://registry.npmjs.org/
+npm view opencode-lens-mcp version bin dist.tarball --registry=https://registry.npmjs.org/
+```
+
+Smoke-test in a clean temporary directory:
+
+```bash
+mkdir /tmp/opencode-lens-npm-verify
+cd /tmp/opencode-lens-npm-verify
+npm init -y
+npm install opencode-lens opencode-lens-mcp --registry=https://registry.npmjs.org/
+```
+
+The plugin bundle depends on Bun runtime features used by opencode, so validate import with Bun rather than Node:
+
+```bash
+bun --eval 'const plugin = await import("opencode-lens"); console.log(Object.keys(plugin).join(","));'
+```
+
+Validate the MCP server by asking it for its tool list:
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify","version":"0.0.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' | npx opencode-lens-mcp
+```
+
 ## Development
 
 ```bash
@@ -94,7 +156,7 @@ Build standalone MCP binaries when needed:
 bun run build:mcp:binaries
 ```
 
-## Install The TUI Plugin
+## Install The TUI Plugin From Source
 
 Build the plugin:
 
@@ -122,7 +184,7 @@ Restart opencode after changing the plugin bundle. Already-running opencode TUI 
 
 ## Configure Hermes MCP
 
-Build the MCP server:
+If you installed from npm, use `command: opencode-lens-mcp` as shown above. For source checkouts, build the MCP server:
 
 ```bash
 bun run --cwd packages/mcp build

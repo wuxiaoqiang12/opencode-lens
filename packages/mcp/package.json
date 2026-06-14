@@ -1,6 +1,7 @@
 {
   "name": "opencode-lens-mcp",
   "version": "0.1.0",
+  "description": "MCP server for discovering and controlling live opencode-lens TUI plugin instances.",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -11,6 +12,26 @@
     "README.md",
     "LICENSE"
   ],
+  "keywords": [
+    "opencode",
+    "mcp",
+    "model-context-protocol",
+    "automation",
+    "agent"
+  ],
+  "homepage": "https://github.com/wuxiaoqiang12/opencode-lens#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wuxiaoqiang12/opencode-lens.git",
+    "directory": "packages/mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/wuxiaoqiang12/opencode-lens/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "build": "bun build src/index.ts --outdir dist --target bun && mv dist/index.js dist/opencode-lens-mcp.js",
     "build:binaries": "bun run build:linux-x64 && bun run build:linux-arm64 && bun run build:darwin-arm64",
@@ -19,7 +40,7 @@
     "build:darwin-arm64": "bun build --compile --target=bun-darwin-arm64 src/index.ts --outfile dist/opencode-lens-mcp-darwin-arm64",
     "prepublishOnly": "bun run build"
   },
-  "dependencies": {
+  "devDependencies": {
     "@opencode-lens/shared": "workspace:*"
   }
 }
