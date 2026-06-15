@@ -56,18 +56,20 @@ def save_json(path, data):
         json.dump(data, f, ensure_ascii=False)
 
 
-def get_last_assistant_summary(sock_path, session_id):
-    """Try to fetch last assistant message text, truncated."""
+def get_last_assistant_info(sock_path, session_id):
+    """Fetch last assistant message text + completion time."""
     data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=1")
     if not data or not isinstance(data, list):
-        return None
+        return None, 0
     for msg in reversed(data):
-        if msg.get("role") == "assistant" and msg.get("text"):
-            text = msg["text"].strip()
+        if msg.get("role") == "assistant":
+            text = msg.get("text", "").strip()
             if len(text) > 500:
-                return text[:500] + "…"
-            return text
-    return None
+                text = text[:500] + "…"
+            t = msg.get("time", {})
+            completed = t.get("completed", 0) or t.get("created", 0)
+            return text or None, completed
+    return None, 0
 
 
 def main():
@@ -145,21 +147,63 @@ def main():
 
             for sid_key, sinfo in sessions_map.items():
                 state = sinfo["state"]
-                curr_states[sid_key] = state
-                prev_state = prev_states.get(sid_key)
 
-                is_tracked = any(
-                    e["session_id"] == sid_key and e.get("pid") == pid
-                    for e in watch.get("entries", [])
+                # Find watch entry for this session
+                watch_entry = None
+                for e in watch.get("entries", []):
+                    if e["session_id"] == sid_key and e.get("pid") == pid:
+                        watch_entry = e
+                        break
+                is_tracked = watch_entry is not None
+
+                # Handle prev format (string for old, dict for new)
+                prev_entry = prev_states.get(sid_key)
+                if isinstance(prev_entry, dict):
+                    prev_state = prev_entry.get("state")
+                    prev_msg_ts = prev_entry.get("last_msg_completed", 0)
+                else:
+                    prev_state = prev_entry
+                    prev_msg_ts = 0
+
+                # For tracked sessions: check last assistant message completion time
+                # This catches cases where running→idle happens between two cron polls
+                last_msg_ts = 0
+                summary_text = None
+                if is_tracked:
+                    summary_text, last_msg_ts = get_last_assistant_info(sock, sid_key)
+
+                curr_states[sid_key] = (
+                    {"state": state, "last_msg_completed": last_msg_ts}
+                    if is_tracked
+                    else state
                 )
-                if is_tracked and prev_state == "running" and state == "idle":
-                    summary = get_last_assistant_summary(sock, sid_key)
-                    completed.append({
-                        "pid": pid,
-                        "session_id": sid_key,
-                        "title": sinfo["title"],
-                        "summary": summary or "(无法获取结果摘要)",
-                    })
+
+                added_at = watch_entry.get("added_at", 0) if watch_entry else 0
+
+                # Completion detection:
+                # Path 1: observed running → idle (standard)
+                # Path 2: idle + last_msg_completed > added_at + new since last poll
+                #         (missed running window — model finished between two polls)
+                if is_tracked and state == "idle":
+                    should_complete = False
+                    if prev_state == "running":
+                        should_complete = True
+                    elif (
+                        last_msg_ts > added_at
+                        and last_msg_ts != prev_msg_ts
+                    ):
+                        should_complete = True
+
+                    if should_complete:
+                        # Reuse summary_text if already fetched, otherwise fetch now
+                        if summary_text is None:
+                            summary_text, _ = get_last_assistant_info(sock, sid_key)
+                        completed.append({
+                            "pid": pid,
+                            "session_id": sid_key,
+                            "title": sinfo["title"],
+                            "summary": summary_text or "(无法获取结果摘要)",
+                        })
 
             curr.setdefault(pid, {})["session_states"] = curr_states
 

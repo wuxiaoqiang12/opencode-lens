@@ -5,7 +5,9 @@ description: Inspect/control live opencode instances via opencode-lens MCP. Use 
 
 # opencode-lens
 
-Use this skill when the user asks to inspect, continue, abort, or approve work running in local opencode instances, or when the user mentions "opencode" in any context that involves controlling or monitoring instances. ALWAYS load this skill via `skill_view` BEFORE calling any `mcp_opencode_lens_` tool — skipping the skill load and jumping to MCP tools directly is a known error that violates the user's workflow preference. Use opencode-lens MCP tools instead of terminal screen scraping, raw socket commands, or direct SQLite reads.
+Use this skill when the user asks to inspect, continue, abort, or approve work running in local opencode instances, or when the user mentions "opencode" in any context that involves controlling or monitoring instances. ALWAYS load this skill via `skill_view` BEFORE calling any `mcp_opencode_lens_` tool — skipping the skill load and jumping to MCP tools directly is a known error that violates the user's workflow preference.
+
+**Pitfall — never reverse-engineer the lens API via raw commands.** Do NOT use `curl --unix-socket`, `socat`, `nc`, or any other raw HTTP/shell tool to probe lens socket endpoints or discover available API routes. This was corrected explicitly by the user twice — ALL interaction with lens instances MUST go through the `mcp_opencode_lens_*` MCP tools. If you need to know what an endpoint returns, call the corresponding MCP tool. The watchdog script (`opencode-watch.py`) is the ONLY exception — it uses raw sockets internally, but you as the agent must never do so interactively. If the MCP tools are insufficient, tell the user; do not fall back to curl.
 
 ## MCP First
 
@@ -54,7 +56,7 @@ When you send a prompt via `prompt_send` (assigning work to a session) or the us
 
 **Watch list file:** `~/.hermes/opencode-watch-list.json` (JSON array of `{pid, session_id, title, socket, added_at}`).
 
-After every `prompt_send`, append the target session to the watch list using `write_file` (read current → add entry → write back). Match the entry to the instance PID and session ID from the `prompt_send` call. The background watchdog polls every 15s; when the session transitions from `running` → `idle`, it outputs a `✅` completion alert with a brief summary of the last assistant message.
+After every `prompt_send`, append the target session to the watch list using `write_file` (read current → add entry → write back). Match the entry to the instance PID and session ID from the `prompt_send` call. The cron watchdog polls every 1 minute; when the session transitions from `running` → `idle`, it outputs a `✅` completion alert with a brief summary of the last assistant message, delivered directly to the user's chat.
 
 When the user explicitly says "跟踪 session X" / "track session X", add it the same way.
 
@@ -147,14 +149,17 @@ Only run abort or permission response commands when the user explicitly asks for
 
 When the user starts or switches a session that will run autonomously (e.g. a long PR review, a code change), they may ask you to "track it" or proactively notify them when a permission prompt or interactive question appears. This is a monitoring request — set up a background poller that watches all lens instances and delivers alerts to the user.
 
-**Two-layer approach:**
+**CRON-ONLY approach (no background process):**
 
-1. **Background process (fast, every 15s):** Start `bash <skill_dir>/scripts/opencode-watch-loop.sh` via `terminal(background=true, watch_patterns=["⚠️","❓"])`. The watch patterns trigger a mid-turn notification when any instance reports a permission or question prompt. This gives near-real-time alerts.
-2. **Cron job (persistent fallback, every 1m):** Create a `no_agent=True` cron job with `script="scripts/opencode-watch.py"` and `schedule="* * * * *"`. This survives Hermes gateway restarts, though the background process does not — after a gateway restart, re-launch the background loop.
+Create a `no_agent=True` cron job with `script="scripts/opencode-watch.py"` and `schedule="* * * * *"` (every minute), `deliver="origin"`. The script uses `fcntl.flock` to prevent overlapping runs. When it detects a permission prompt, question, or session completion, it prints an alert to stdout, which the cron mechanism delivers directly to the user's chat.
 
-**Dedup:** The script uses a state file (`~/.hermes/opencode-watch-state.json`) keyed by PID. The same `permission_id` or question `request_id` triggers only once until it clears, so the user is not spammed.
+**Do NOT use a background process loop** — it competes with the cron job for the same state file and watch list, causing race conditions where the background process removes watch list entries but its output (via `watch_patterns`) can only notify the agent during active turns, not autonomously deliver to the user. The cron `no_agent=True` + `deliver="origin"` path is the only mechanism that can autonomously push notifications to the user.
 
-**How the script works:** It reads the lens HTTP API directly via unix sockets (`/tui/status` on each `*.sock` in `$XDG_RUNTIME_DIR/opencode-lens/`), checks `needs_user` + `needs_user_kind`, and prints an alert line starting with `⚠️` (permission) or `❓` (question). Empty stdout = silent (nothing to report), which is the correct no-agent cron behavior.
+**Dedup:** The script uses a state file (`~/.hermes/opencode-watch-state.json`) keyed by PID. The same `permission_id` or question `request_id` triggers only once until it clears.
+
+**Completion detection has two paths** (as of 2026-06-15 fix): (1) the standard `running → idle` state transition observed across two cron polls; (2) a fallback that checks the last assistant message's `time.completed` timestamp against the watch list entry's `added_at` — if the message completed after tracking started and is newer than what was seen in the previous poll, the session is reported as complete. Path 2 catches the common case where the model finishes between two 1-minute cron polls (the running state is never observed). The state file stores `{state, last_msg_completed}` per tracked session (dict format); old string-format entries are handled with backward-compatible `isinstance` checks.
+
+**How the script works:** It reads the lens HTTP API directly via unix sockets (`/tui/status` on each `*.sock` in `$XDG_RUNTIME_DIR/opencode-lens/`), checks `needs_user` + `needs_user_kind`, and detects `running` → `idle` transitions for tracked sessions. It prints alert lines starting with `⚠️` (permission), `❓` (question), or `✅` (completion). Empty stdout = silent.
 
 **When you receive a watchdog alert:** Follow the permission bridging or question bridging sections above — read the details from `tui_status`, present choices to the user via `clarify`, and submit via `permission_respond` or `question_respond`.
 
