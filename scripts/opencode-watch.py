@@ -64,8 +64,8 @@ def get_last_assistant_info(sock_path, session_id):
     for msg in reversed(data):
         if msg.get("role") == "assistant":
             text = msg.get("text", "").strip()
-            if len(text) > 500:
-                text = text[:500] + "…"
+            if len(text) > 300:
+                text = text[:300] + "…\n   (回复较长，如需详情请问我)"
             t = msg.get("time", {})
             completed = t.get("completed", 0) or t.get("created", 0)
             return text or None, completed

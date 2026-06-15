@@ -66,7 +66,7 @@ When the user says "stop tracking" / "取消跟踪", remove the matching entry f
 
 Use `mcp_opencode_lens_session_status`, `mcp_opencode_lens_messages_read`, `mcp_opencode_lens_diff_get`, and `mcp_opencode_lens_todo_get`.
 
-Summarize only when the user asks for a summary. When the user asks to see, fetch, relay, or send an existing opencode message, return the message text verbatim. Do not rewrite, compress, translate, reorganize, or add conclusions unless explicitly asked.
+When relaying opencode messages to the user: if the message is ≤500 characters (Chinese chars count as 1 each), return it verbatim. If it exceeds 500 characters, **proactively summarize** it — extract key points, conclusions, and actionable items in concise Chinese, rather than dumping the full text. The user can always ask for full details if needed. This applies to both manual relay (you fetch via messages_read) and watchdog notifications.
 
 ## Send Prompts
 
@@ -159,9 +159,19 @@ Create a `no_agent=True` cron job with `script="scripts/opencode-watch.py"` and 
 
 **Completion detection has two paths** (as of 2026-06-15 fix): (1) the standard `running → idle` state transition observed across two cron polls; (2) a fallback that checks the last assistant message's `time.completed` timestamp against the watch list entry's `added_at` — if the message completed after tracking started and is newer than what was seen in the previous poll, the session is reported as complete. Path 2 catches the common case where the model finishes between two 1-minute cron polls (the running state is never observed). The state file stores `{state, last_msg_completed}` per tracked session (dict format); old string-format entries are handled with backward-compatible `isinstance` checks.
 
-**How the script works:** It reads the lens HTTP API directly via unix sockets (`/tui/status` on each `*.sock` in `$XDG_RUNTIME_DIR/opencode-lens/`), checks `needs_user` + `needs_user_kind`, and detects `running` → `idle` transitions for tracked sessions. It prints alert lines starting with `⚠️` (permission), `❓` (question), or `✅` (completion). Empty stdout = silent.
+**How the script works:** It reads the lens HTTP API directly via unix sockets (`/tui/status` on each `*.sock` in `$XDG_RUNTIME_DIR/opencode-lens/`), checks `needs_user` + `needs_user_kind`, and detects `running` → `idle` transitions for tracked sessions. For permission alerts, it also fetches the pending tool call from `/session/<id>/messages?limit=2` to describe what operation needs approval (e.g. "执行命令: git push"). It prints alert lines starting with `⚠️` (permission), `❓` (question), or `✅` (completion). Empty stdout = silent.
 
-**When you receive a watchdog alert:** Follow the permission bridging or question bridging sections above — read the details from `tui_status`, present choices to the user via `clarify`, and submit via `permission_respond` or `question_respond`.
+**Alert format — human-readable, NO technical IDs:** The watchdog alert text is what the user sees directly. NEVER include `permission_id`, `session_id`, `request_id`, or PID in the alert output. The format must be:
+- Permission: `⚠️「<session title>」请求权限确认\n   操作: <human-readable description>\n   选项: allow once / allow always / deny`
+- Question: `❓「<session title>」有交互问题等待回答\n   Q: <question>\n   选项: A, B, C`
+- Completion: `✅「<session title>」已完成\n   摘要: <brief summary>`
+The script fetches the pending tool call's description from messages (e.g. "执行命令: git push origin main", "write 文件: /path/to/file") to populate the `操作` line.
+
+**When you receive a watchdog alert:** Follow the permission bridging or question bridging sections above — read the details from `tui_status`, present choices to the user via `clarify`, and submit via `permission_respond` or `question_respond`. The user typically responds with a brief instruction like "allow always" or "给他 allow always" — map this to `permission_respond` with `response: "always"` and act immediately without further clarification.
+
+## Future Architecture: GUI Support & ACP
+
+For analysis of extending opencode-lens to support opencode's GUI app, and a comparison of MCP+TUI plugin vs ACP (Agent Communication Protocol), see `references/gui-and-acp-roadmap.md`. Key takeaway: ACP and MCP+TUI are complementary — ACP suits headless agent backend scenarios; MCP+TUI suits controlling user's running instances. The recommended evolution is a host adapter architecture with a capability matrix.
 
 ## Per-Message Model Selection
 
