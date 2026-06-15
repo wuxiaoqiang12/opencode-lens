@@ -170,7 +170,7 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 // src/types.ts
-var LENS_VERSION = "0.1.0";
+var LENS_VERSION = "0.1.1";
 export {
   registeredInstanceJsonSchema,
   readRegisteredInstanceJson,

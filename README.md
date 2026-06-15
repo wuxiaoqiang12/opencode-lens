@@ -296,7 +296,8 @@ OPENCODE_WATCH_SCRIPT          used by opencode-watch-loop.sh
 
 ## MCP Tool Highlights
 
-- `instances_list`: list active opencode lens instances.
+- `instances_list`: list active opencode lens instances; compact by design and does not include historical sessions.
+- `sessions_list`: list recent session summaries for one instance with an explicit `limit`.
 - `tui_status`: read the visible TUI session/status for an instance.
 - `prompt_send`: send a prompt to a target session; supports per-message model parameters.
 - `messages_read`: read recent messages for a session.

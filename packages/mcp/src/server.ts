@@ -1,3 +1,5 @@
+import { LENS_VERSION } from "@opencode-lens/shared";
+
 import { tools } from "./tools";
 
 interface JsonRpcRequest {
@@ -59,7 +61,7 @@ class McpServer {
         return result(request.id, {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "opencode-lens-mcp", version: "0.1.0" },
+          serverInfo: { name: "opencode-lens-mcp", version: LENS_VERSION },
         });
       }
 

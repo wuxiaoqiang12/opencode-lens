@@ -24,6 +24,7 @@ Restart Hermes after installing or updating the MCP server so the tool list is r
 ## Tools
 
 - `instances_list`
+- `sessions_list`
 - `tui_status`
 - `session_create`
 - `prompt_send`
@@ -40,6 +41,7 @@ Restart Hermes after installing or updating the MCP server so the tool list is r
 
 - This package talks to local Unix sockets created by the `opencode-lens` TUI plugin.
 - It does not start opencode and does not open network listeners.
+- `instances_list` intentionally returns only compact instance metadata. Use `sessions_list` with a `limit` when session history is needed.
 - The distributed `dist/opencode-lens-mcp.js` bundle is self-contained except for Bun/Node built-ins.
 
 ## License

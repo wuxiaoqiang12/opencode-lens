@@ -13,7 +13,8 @@ Use this skill when the user asks to inspect, continue, abort, or approve work r
 
 Hermes registers tools with the server prefix `mcp_opencode_lens_` when the config key is `opencode-lens`:
 
-- `mcp_opencode_lens_instances_list` to discover active lens instances.
+- `mcp_opencode_lens_instances_list` to discover active lens instances. It is compact by design and does not include historical `sessions` arrays.
+- `mcp_opencode_lens_sessions_list` to list recent session summaries for one instance when the user explicitly asks for historical/session-list information.
 - `mcp_opencode_lens_tui_status` to read live TUI-oriented status for one instance.
 - `mcp_opencode_lens_messages_read` to read session messages.
 - `mcp_opencode_lens_tui_session_switch` to switch the visible TUI session.
@@ -27,7 +28,9 @@ If the MCP tools are not present, stop and tell the user to reload or fix the He
 
 ## Discovery
 
-Use `mcp_opencode_lens_instances_list` first. Internally keep the mapping from each instance's `pid`/`socket` to a stable display label (`实例 1`, `实例 2`, ...), and target instances by that mapping. When talking to the user, refer to instances by label only; do not surface the PID unless the user explicitly asks.
+Use `mcp_opencode_lens_instances_list` first. It returns only compact instance metadata (PID/socket/directory/health), not historical session arrays. Internally keep the mapping from each instance's `pid`/`socket` to a stable display label (`实例 1`, `实例 2`, ...), and target instances by that mapping. When talking to the user, refer to instances by label only; do not surface the PID unless the user explicitly asks.
+
+Only call `mcp_opencode_lens_sessions_list` when the user explicitly asks to list/browse historical sessions for a specific instance. Pass a small `limit` (default 20; lower if enough). Do not use it for normal status overview.
 
 ## Status Overview
 
@@ -42,7 +45,7 @@ Rules:
 
 - The `实例` column MUST contain only a generic label: `实例 1`, `实例 2`, `实例 3`, in order. NEVER put the PID, project, or socket in that column or anywhere in the table (no `实例 1（777208）`, no `777208（IB_Robot）`). The `目录` column MUST contain the `directory` field from `mcp_opencode_lens_instances_list`. PID is only allowed if the user explicitly asks for it.
 - Always call `mcp_opencode_lens_instances_list` fresh, then `mcp_opencode_lens_tui_status` for each active instance.
-- Show only `tui_status.current_session`. If `current_session` is missing, write `当前 session 未知`; never fill the table from `instances_list.sessions[0]` or any shared historical session list.
+- Show only `tui_status.current_session`. If `current_session` is missing, write `当前 session 未知`; never fill the table from historical session lists. `instances_list` no longer returns `sessions` by design.
 - Do not output session statistics, topic buckets, historical session lists, or "recently active" summaries unless the user explicitly asks for statistics.
 - Do not mention PID, uptime, socket, registry path, OpenCode version, historical session counts, or implementation details unless the user explicitly asks. Directory may appear only in the `目录` column.
 - If you must disambiguate two instances, do it with the session title, not the PID. Reveal the PID only when the user explicitly asks (e.g. "哪个 PID", "显示进程号").

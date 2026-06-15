@@ -18,7 +18,8 @@ export const tools: McpTool[] = [
   {
     definition: {
       name: "instances_list",
-      description: "List active local opencode-lens instances and their session summaries. Dead registry entries are cleaned during discovery.",
+      description:
+        "List active local opencode-lens instances. This is intentionally compact and does not include session history; use sessions_list when session summaries are needed. Dead registry entries are cleaned during discovery.",
       inputSchema: {
         type: "object",
         additionalProperties: false,
@@ -31,27 +32,34 @@ export const tools: McpTool[] = [
           return requestUnixJson<LensHealth>(instance.socket, "/health");
         },
       });
-
-      const instances = await Promise.all(
-        discovered.active.map(async (instance) => {
-          try {
-            const sessions = await requestUnixJson<SessionSummary[]>(instance.socket, "/sessions");
-            return { ...instance, sessions };
-          } catch (error) {
-            return {
-              ...instance,
-              sessions: [],
-              sessions_error: error instanceof Error ? error.message : String(error),
-            };
-          }
-        }),
-      );
-
       return {
-        instances,
+        instances: discovered.active,
         removed: discovered.removed,
         errors: discovered.errors,
       };
+    },
+  },
+  {
+    definition: {
+      name: "sessions_list",
+      description:
+        "List recent session summaries for one opencode-lens instance. Use this only when session history is explicitly needed; instances_list stays compact by design.",
+      inputSchema: {
+        type: "object",
+        additionalProperties: false,
+        required: ["instance"],
+        properties: {
+          instance: { type: "string" },
+          limit: { type: "integer", minimum: 1, maximum: 100, default: 20 },
+        },
+      },
+    },
+    async call(input) {
+      const { instance, args } = await resolveInstance(input);
+      const limit = optionalInteger(args, "limit") ?? 20;
+      if (limit > 100) throw new Error("limit must be at most 100");
+      const sessions = await requestUnixJson<SessionSummary[]>(instance.socket, `/sessions?limit=${limit}`);
+      return { instance: instance.id, sessions, limit };
     },
   },
   {
