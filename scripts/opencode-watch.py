@@ -72,6 +72,35 @@ def get_last_assistant_info(sock_path, session_id):
     return None, 0
 
 
+def get_pending_permission_desc(sock_path, session_id):
+    """Fetch description of the tool call awaiting permission."""
+    data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=2")
+    if not data or not isinstance(data, list):
+        return None
+    for msg in reversed(data):
+        if msg.get("role") != "assistant":
+            continue
+        for part in msg.get("parts", []):
+            if part.get("type") == "tool" and part.get("state", {}).get("status") == "pending":
+                tool_name = part.get("tool", "未知工具")
+                inp = part.get("state", {}).get("input", {})
+                title = part.get("state", {}).get("title", "")
+                desc = inp.get("description", "") if isinstance(inp, dict) else ""
+                # Build a human-readable description
+                if tool_name == "bash":
+                    cmd = inp.get("command", "") if isinstance(inp, dict) else ""
+                    if cmd:
+                        cmd_short = cmd[:120] + "…" if len(cmd) > 120 else cmd
+                        return f"执行命令: {cmd_short}"
+                    return f"执行 bash 命令"
+                if tool_name in ("write", "edit"):
+                    fpath = inp.get("path", "") if isinstance(inp, dict) else ""
+                    return f"{tool_name} 文件: {fpath}" if fpath else f"{tool_name} 文件"
+                label = desc or title or tool_name
+                return f"使用 {tool_name}: {label}" if label else f"使用 {tool_name}"
+    return None
+
+
 def main():
     # File lock to prevent concurrent runs (cron overlap)
     lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_WRONLY)
@@ -107,10 +136,13 @@ def main():
 
             if needs_user and kind == "permission":
                 if p.get("perm_id") != perm_id:
+                    # Try to get what the permission is about
+                    perm_desc = get_pending_permission_desc(sock, sid) if sid else None
+                    desc_line = f"   操作: {perm_desc}\n" if perm_desc else ""
                     alerts.append(
-                        f"⚠️ 实例(PID {pid})「{title}」请求权限确认\n"
-                        f"   permission_id: {perm_id}\n"
-                        f"   session: {sid}"
+                        f"⚠️「{title}」请求权限确认\n"
+                        f"{desc_line}"
+                        f"   选项: allow once / allow always / deny"
                     )
                 curr.setdefault(pid, {})["perm_id"] = perm_id
 
@@ -129,8 +161,7 @@ def main():
                     q_summary = "   (详情未知，请检查 TUI)"
                 if p.get("q_req_id") != req_id:
                     alerts.append(
-                        f"❓ 实例(PID {pid})「{title}」有交互问题等待回答\n"
-                        f"   request_id: {req_id}\n{q_summary}"
+                        f"❓「{title}」有交互问题等待回答\n{q_summary}"
                     )
                 curr.setdefault(pid, {})["q_req_id"] = req_id
 
@@ -210,10 +241,7 @@ def main():
         # Build completion alerts
         for c in completed:
             alerts.append(
-                f"✅ 跟踪的 session 已完成\n"
-                f"   实例: PID {c['pid']}\n"
-                f"   session: {c['session_id']}\n"
-                f"   标题: {c['title']}\n"
+                f"✅「{c['title']}」已完成\n"
                 f"   摘要: {c['summary']}"
             )
 
