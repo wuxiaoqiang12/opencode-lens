@@ -72,6 +72,36 @@ def get_last_assistant_info(sock_path, session_id):
     return None, 0
 
 
+def get_pending_question_desc(sock_path, session_id):
+    """Fetch pending question details from messages."""
+    data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=2")
+    if not data or not isinstance(data, list):
+        return None, None
+    for msg in reversed(data):
+        if msg.get("role") != "assistant":
+            continue
+        for part in msg.get("parts", []):
+            if part.get("type") == "tool" and part.get("tool") == "question":
+                state = part.get("state", {})
+                if state.get("status") == "pending" or state.get("status") == "running":
+                    inp = state.get("input", {})
+                    req_id = inp.get("id", inp.get("request_id", "")) if isinstance(inp, dict) else ""
+                    questions = inp.get("questions", []) if isinstance(inp, dict) else []
+                    if not questions:
+                        # Try alternative structure
+                        questions = inp if isinstance(inp, list) else []
+                    parts_out = []
+                    for i, q in enumerate(questions):
+                        if not isinstance(q, dict):
+                            continue
+                        label = q.get("question", q.get("header", f"Question {i+1}"))
+                        opts = [o.get("label", str(o)) if isinstance(o, dict) else str(o) for o in q.get("options", [])]
+                        parts_out.append(f"   Q: {label}\n   选项: {', '.join(opts)}")
+                    summary = "\n".join(parts_out) if parts_out else "   (无法解析问题详情)"
+                    return req_id or "unknown", summary
+    return None, None
+
+
 def get_pending_permission_desc(sock_path, session_id):
     """Fetch description of the tool call awaiting permission."""
     data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=2")
@@ -147,6 +177,7 @@ def main():
                 curr.setdefault(pid, {})["perm_id"] = perm_id
 
             elif needs_user and kind == "question":
+                # Try to get question details from tui_status first, then from messages
                 q_obj = status.get("status", {}).get("question", {}) if isinstance(status.get("status"), dict) else {}
                 req_id = q_obj.get("request_id", "")
                 questions = q_obj.get("questions", [])
@@ -158,7 +189,11 @@ def main():
                         parts.append(f"   Q: {label}\n   选项: {', '.join(opts)}")
                     q_summary = "\n".join(parts)
                 else:
-                    q_summary = "   (详情未知，请检查 TUI)"
+                    # Fallback: fetch from messages API
+                    msg_req_id, msg_summary = get_pending_question_desc(sock, sid) if sid else (None, None)
+                    if msg_req_id:
+                        req_id = msg_req_id
+                    q_summary = msg_summary or "   (无法获取问题详情)"
                 if p.get("q_req_id") != req_id:
                     alerts.append(
                         f"❓「{title}」有交互问题等待回答\n{q_summary}"
