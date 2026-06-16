@@ -216,9 +216,33 @@ def describe_permission_tool_part(part):
             return f"执行命令: {clamp_detail(cmd)}"
         return "执行 bash 命令"
 
-    if tool_name in ("write", "edit"):
+    if tool_name in ("write", "edit", "multi_edit"):
         fpath = inp.get("path") or inp.get("filePath") or state.get("path") or state.get("filePath") or ""
-        return f"{tool_name} 文件: {clamp_detail(fpath)}" if fpath else f"{tool_name} 文件"
+        action = {"write": "写入文件", "edit": "编辑文件", "multi_edit": "批量编辑文件"}.get(tool_name, "修改文件")
+        return f"{action}: {clamp_detail(fpath)}" if fpath else action
+
+    if tool_name in ("apply_patch", "patch"):
+        patch_text = inp.get("patchText") or inp.get("patch") or state.get("patchText") or state.get("patch") or ""
+        return f"应用补丁: {clamp_detail(patch_text, 500)}" if patch_text else "应用补丁"
+
+    if tool_name == "read":
+        fpath = inp.get("filePath") or inp.get("path") or state.get("filePath") or state.get("path") or ""
+        return f"读取文件: {clamp_detail(fpath)}" if fpath else "读取文件"
+
+    if tool_name == "grep":
+        pattern = inp.get("pattern") or state.get("pattern") or ""
+        path = inp.get("path") or state.get("path") or ""
+        include = inp.get("include") or state.get("include") or ""
+        target = ", ".join(str(item) for item in (path, include) if item)
+        detail = f"搜索: {pattern}" if pattern else "搜索内容"
+        return f"{detail}（{clamp_detail(target)}）" if target else detail
+
+    if tool_name == "glob":
+        pattern = inp.get("pattern") or state.get("pattern") or ""
+        path = inp.get("path") or state.get("path") or ""
+        if pattern and path:
+            return f"查找文件: {clamp_detail(path)}/{clamp_detail(pattern)}"
+        return f"查找文件: {clamp_detail(pattern or path)}" if pattern or path else "查找文件"
 
     label = desc or title or tool_name
     return f"使用 {tool_name}: {clamp_detail(label)}" if label else f"使用 {tool_name}"

@@ -68,9 +68,39 @@ def test_question_option_keeps_description():
     assert watch.format_question_option({"label": "allow once", "description": "只允许这一次"}) == "allow once（只允许这一次）"
 
 
+def test_describe_read_permission_with_file_path():
+    watch = load_watchdog()
+    assert (
+        watch.describe_permission_tool_part(
+            {
+                "type": "tool",
+                "tool": "read",
+                "state": {"status": "running", "input": {"filePath": "/tmp/review.md"}},
+            }
+        )
+        == "读取文件: /tmp/review.md"
+    )
+
+
+def test_describe_write_permission_with_file_path():
+    watch = load_watchdog()
+    assert (
+        watch.describe_permission_tool_part(
+            {
+                "type": "tool",
+                "tool": "write",
+                "state": {"status": "running", "input": {"path": "/tmp/result.txt"}},
+            }
+        )
+        == "写入文件: /tmp/result.txt"
+    )
+
+
 if __name__ == "__main__":
     test_describe_pending_bash_permission()
     test_ignore_completed_tool_part()
     test_short_completion_is_relayed_verbatim()
     test_long_completion_is_extractive_summary()
     test_question_option_keeps_description()
+    test_describe_read_permission_with_file_path()
+    test_describe_write_permission_with_file_path()
