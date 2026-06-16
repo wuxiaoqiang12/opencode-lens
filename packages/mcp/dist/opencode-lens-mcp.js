@@ -1,13 +1,14 @@
-#!/usr/bin/env bun
-// @bun
+#!/usr/bin/env node
+import { createRequire } from "node:module";
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // ../shared/src/discovery.ts
-import { readdir, readFile, unlink } from "fs/promises";
-import { basename, join as join2 } from "path";
+import { readdir, readFile, unlink } from "node:fs/promises";
+import { basename, join as join2 } from "node:path";
 
 // ../shared/src/paths.ts
-import { homedir } from "os";
-import { join } from "path";
+import { homedir } from "node:os";
+import { join } from "node:path";
 var APP_DIR = "opencode-lens";
 function getLensDataDir(options = {}) {
   const env = options.env ?? process.env;
@@ -134,9 +135,9 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 // ../shared/src/types.ts
-var LENS_VERSION = "0.1.2";
+var LENS_VERSION = "0.1.3";
 // src/lens-http.ts
-import { createConnection } from "net";
+import { createConnection } from "node:net";
 async function requestUnixJson(socketPath, path, options = {}) {
   const response = await requestUnix(socketPath, path, options.method ?? "GET", options.body, options.timeoutMs ?? 2000);
   const parsed = parseHttpResponse(response);
@@ -264,7 +265,7 @@ function parseMaybeJson(input) {
 }
 
 // src/sse.ts
-import { createConnection as createConnection2 } from "net";
+import { createConnection as createConnection2 } from "node:net";
 async function waitForEvents(instances, cursor, timeoutMs, filter = {}) {
   const nextCursor = { instances: { ...cursor.instances ?? {} } };
   const events = [];
@@ -1039,7 +1040,7 @@ function asRecord2(input) {
 async function main() {
   await createServer().run();
 }
-if (import.meta.main) {
+if (__require.main == __require.module) {
   await main();
 }
 export {

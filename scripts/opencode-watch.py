@@ -15,6 +15,9 @@ SOCK_DIR = os.environ.get("OPENCODE_LENS_SOCKET_DIR", os.path.join(DEFAULT_RUNTI
 STATE_FILE = os.path.expanduser(os.environ.get("OPENCODE_WATCH_STATE_FILE", "~/.hermes/opencode-watch-state.json"))
 WATCH_FILE = os.path.expanduser(os.environ.get("OPENCODE_WATCH_LIST_FILE", "~/.hermes/opencode-watch-list.json"))
 LOCK_FILE = os.path.expanduser(os.environ.get("OPENCODE_WATCH_LOCK_FILE", "~/.hermes/opencode-watch.lock"))
+DIRECT_RELAY_LIMIT = 500
+COMPLETION_SUMMARY_LIMIT = 500
+DETAIL_LIMIT = 2000
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -64,17 +67,86 @@ def get_last_assistant_info(sock_path, session_id):
     for msg in reversed(data):
         if msg.get("role") == "assistant":
             text = msg.get("text", "").strip()
-            if len(text) > 300:
-                text = text[:300] + "…\n   (回复较长，如需详情请问我)"
+            text = format_completion_text(text)
             t = msg.get("time", {})
             completed = t.get("completed", 0) or t.get("created", 0)
             return text or None, completed
     return None, 0
 
 
+def format_completion_text(text):
+    """Relay short completions verbatim; make long completions concise for chat notifications."""
+    text = (text or "").strip()
+    if len(text) <= DIRECT_RELAY_LIMIT:
+        return text
+
+    summary = summarize_long_text(text, COMPLETION_SUMMARY_LIMIT)
+    return f"内容较长，自动摘取要点：\n{summary}\n   (回复较长，如需详情请问我)"
+
+
+def summarize_long_text(text, limit):
+    """Deterministic extractive summary for no-agent cron delivery."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    picked = []
+
+    for line in lines:
+        if is_summary_like_line(line):
+            picked.append(line)
+        if len(picked) >= 6:
+            break
+
+    if not picked:
+        picked = split_sentences(text)[:5]
+
+    if not picked:
+        picked = [text]
+
+    out = []
+    used = 0
+    for item in picked:
+        item = item.strip()
+        if not item:
+            continue
+        item = item[:limit]
+        prefix = "- " if not item.startswith(("-", "*", "•")) else ""
+        line = f"   {prefix}{item}"
+        if used + len(line) + 1 > limit:
+            remain = limit - used - 8
+            if remain > 40:
+                out.append(line[:remain] + "…")
+            break
+        out.append(line)
+        used += len(line) + 1
+
+    return "\n".join(out) if out else f"   {text[:limit]}…"
+
+
+def is_summary_like_line(line):
+    stripped = line.lstrip()
+    if stripped.startswith(("- ", "* ", "• ", "1. ", "2. ", "3. ", "4. ", "5. ")):
+        return True
+    return any(marker in stripped[:16] for marker in ("结论", "原因", "建议", "风险", "问题", "完成", "修复", "结果"))
+
+
+def split_sentences(text):
+    sentences = []
+    current = []
+    for ch in text.replace("\r", ""):
+        current.append(ch)
+        if ch in "。！？!?\n":
+            sentence = "".join(current).strip()
+            if sentence:
+                sentences.append(sentence)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        sentences.append(tail)
+    return sentences
+
+
 def get_pending_question_desc(sock_path, session_id):
     """Fetch pending question details from messages."""
-    data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=2")
+    data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=20")
     if not data or not isinstance(data, list):
         return None, None
     for msg in reversed(data):
@@ -94,8 +166,8 @@ def get_pending_question_desc(sock_path, session_id):
                     for i, q in enumerate(questions):
                         if not isinstance(q, dict):
                             continue
-                        label = q.get("question", q.get("header", f"Question {i+1}"))
-                        opts = [o.get("label", str(o)) if isinstance(o, dict) else str(o) for o in q.get("options", [])]
+                        label = clamp_detail(q.get("question", q.get("header", f"Question {i+1}")))
+                        opts = [format_question_option(o) for o in q.get("options", [])]
                         parts_out.append(f"   Q: {label}\n   选项: {', '.join(opts)}")
                     summary = "\n".join(parts_out) if parts_out else "   (无法解析问题详情)"
                     return req_id or "unknown", summary
@@ -104,31 +176,67 @@ def get_pending_question_desc(sock_path, session_id):
 
 def get_pending_permission_desc(sock_path, session_id):
     """Fetch description of the tool call awaiting permission."""
-    data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=2")
+    data = http_unix(sock_path, "GET", f"/session/{session_id}/messages?limit=20")
     if not data or not isinstance(data, list):
         return None
     for msg in reversed(data):
         if msg.get("role") != "assistant":
             continue
-        for part in msg.get("parts", []):
-            if part.get("type") == "tool" and part.get("state", {}).get("status") == "pending":
-                tool_name = part.get("tool", "未知工具")
-                inp = part.get("state", {}).get("input", {})
-                title = part.get("state", {}).get("title", "")
-                desc = inp.get("description", "") if isinstance(inp, dict) else ""
-                # Build a human-readable description
-                if tool_name == "bash":
-                    cmd = inp.get("command", "") if isinstance(inp, dict) else ""
-                    if cmd:
-                        cmd_short = cmd[:120] + "…" if len(cmd) > 120 else cmd
-                        return f"执行命令: {cmd_short}"
-                    return f"执行 bash 命令"
-                if tool_name in ("write", "edit"):
-                    fpath = inp.get("path", "") if isinstance(inp, dict) else ""
-                    return f"{tool_name} 文件: {fpath}" if fpath else f"{tool_name} 文件"
-                label = desc or title or tool_name
-                return f"使用 {tool_name}: {label}" if label else f"使用 {tool_name}"
+        for part in reversed(msg.get("parts", [])):
+            desc = describe_permission_tool_part(part)
+            if desc:
+                return desc
     return None
+
+
+def describe_permission_tool_part(part):
+    if not isinstance(part, dict) or part.get("type") != "tool":
+        return None
+
+    state = part.get("state", {})
+    if not isinstance(state, dict):
+        state = {}
+
+    # Different opencode versions report pending tool calls with either
+    # status/type=running or status/type=pending while a permission dialog is open.
+    state_kind = state.get("status") or state.get("type")
+    if state_kind not in ("pending", "running", "waiting", "waiting-permission"):
+        return None
+
+    tool_name = part.get("tool") or part.get("name") or state.get("tool") or state.get("name") or "未知工具"
+    inp = state.get("input") or part.get("input") or {}
+    if not isinstance(inp, dict):
+        inp = {}
+    title = state.get("title") or part.get("title") or ""
+    desc = inp.get("description") or state.get("description") or part.get("description") or ""
+
+    if tool_name == "bash":
+        cmd = inp.get("command") or state.get("command") or part.get("command") or ""
+        if cmd:
+            return f"执行命令: {clamp_detail(cmd)}"
+        return "执行 bash 命令"
+
+    if tool_name in ("write", "edit"):
+        fpath = inp.get("path") or inp.get("filePath") or state.get("path") or state.get("filePath") or ""
+        return f"{tool_name} 文件: {clamp_detail(fpath)}" if fpath else f"{tool_name} 文件"
+
+    label = desc or title or tool_name
+    return f"使用 {tool_name}: {clamp_detail(label)}" if label else f"使用 {tool_name}"
+
+
+def format_question_option(option):
+    if not isinstance(option, dict):
+        return clamp_detail(str(option))
+    label = str(option.get("label") or option)
+    description = option.get("description")
+    if description:
+        return clamp_detail(f"{label}（{description}）")
+    return clamp_detail(label)
+
+
+def clamp_detail(value, limit=DETAIL_LIMIT):
+    text = str(value or "").strip()
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 def main():
@@ -168,7 +276,7 @@ def main():
                 if p.get("perm_id") != perm_id:
                     # Try to get what the permission is about
                     perm_desc = get_pending_permission_desc(sock, sid) if sid else None
-                    desc_line = f"   操作: {perm_desc}\n" if perm_desc else ""
+                    desc_line = f"   操作: {perm_desc or '权限详情暂未从消息中解析到，请查看 opencode TUI 中的权限弹窗'}\n"
                     alerts.append(
                         f"⚠️「{title}」请求权限确认\n"
                         f"{desc_line}"
@@ -178,14 +286,14 @@ def main():
 
             elif needs_user and kind == "question":
                 # Try to get question details from tui_status first, then from messages
-                q_obj = status.get("status", {}).get("question", {}) if isinstance(status.get("status"), dict) else {}
+                q_obj = status.get("question", {}) if isinstance(status.get("question"), dict) else {}
                 req_id = q_obj.get("request_id", "")
                 questions = q_obj.get("questions", [])
                 if questions:
                     parts = []
                     for i, q in enumerate(questions):
-                        label = q.get("question", q.get("header", f"Question {i+1}"))
-                        opts = [o.get("label", "") for o in q.get("options", [])]
+                        label = clamp_detail(q.get("question", q.get("header", f"Question {i+1}")))
+                        opts = [format_question_option(o) for o in q.get("options", [])]
                         parts.append(f"   Q: {label}\n   选项: {', '.join(opts)}")
                     q_summary = "\n".join(parts)
                 else:
