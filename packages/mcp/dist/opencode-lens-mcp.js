@@ -141,7 +141,7 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 // ../shared/src/types.ts
-var LENS_VERSION = "0.1.3";
+var LENS_VERSION = "0.1.4";
 // src/lens-http.ts
 import { createConnection } from "node:net";
 async function requestUnixJson(socketPath, path, options = {}) {
