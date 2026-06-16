@@ -96,6 +96,27 @@ def test_describe_write_permission_with_file_path():
     )
 
 
+def test_classify_permission_risk_high_for_git_push():
+    watch = load_watchdog()
+    assert watch.classify_permission_risk("执行命令: git push origin main") == "高"
+
+
+def test_classify_permission_risk_medium_for_write():
+    watch = load_watchdog()
+    assert watch.classify_permission_risk("写入文件: /tmp/result.txt") == "中"
+
+
+def test_classify_permission_risk_low_for_read():
+    watch = load_watchdog()
+    assert watch.classify_permission_risk("读取文件: /tmp/review.md") == "低"
+
+
+def test_format_duration_minutes_and_hours():
+    watch = load_watchdog()
+    assert watch.format_duration(610) == "10 分钟"
+    assert watch.format_duration(7260) == "2 小时 1 分钟"
+
+
 if __name__ == "__main__":
     test_describe_pending_bash_permission()
     test_ignore_completed_tool_part()
@@ -104,3 +125,7 @@ if __name__ == "__main__":
     test_question_option_keeps_description()
     test_describe_read_permission_with_file_path()
     test_describe_write_permission_with_file_path()
+    test_classify_permission_risk_high_for_git_push()
+    test_classify_permission_risk_medium_for_write()
+    test_classify_permission_risk_low_for_read()
+    test_format_duration_minutes_and_hours()

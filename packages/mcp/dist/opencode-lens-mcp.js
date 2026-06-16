@@ -15,6 +15,12 @@ function getLensDataDir(options = {}) {
   const home = options.home ?? homedir();
   return join(env.XDG_DATA_HOME || join(home, ".local", "share"), APP_DIR);
 }
+function getLensRuntimeDir(options = {}) {
+  const env = options.env ?? process.env;
+  if (env.XDG_RUNTIME_DIR)
+    return join(env.XDG_RUNTIME_DIR, APP_DIR);
+  return join(getLensDataDir(options), "sockets");
+}
 function getInstancesDir(options = {}) {
   return join(getLensDataDir(options), "instances");
 }
@@ -1036,8 +1042,159 @@ function asRecord2(input) {
   return typeof input === "object" && input !== null && !Array.isArray(input) ? input : undefined;
 }
 
+// src/doctor.ts
+import { access, readFile as readFile2, stat } from "node:fs/promises";
+import { delimiter, join as join3 } from "node:path";
+async function runDoctor(options = {}) {
+  const report = await buildDoctorReport();
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}
+`);
+    return report;
+  }
+  process.stdout.write(formatDoctorReport(report));
+  return report;
+}
+async function buildDoctorReport() {
+  const checks = [];
+  checks.push({ name: "mcp-version", status: "pass", message: `opencode-lens-mcp ${LENS_VERSION}` });
+  checks.push(checkNodeVersion());
+  checks.push(await checkCommandOnPath("node"));
+  checks.push(await checkCommandOnPath("bun"));
+  const instancesDir = getInstancesDir();
+  const runtimeDir = getLensRuntimeDir();
+  checks.push(await checkDirectory("instances-dir", instancesDir));
+  checks.push(await checkDirectory("runtime-dir", runtimeDir));
+  const discovery2 = await discoverInstances({ probe: (instance) => requestUnixJson(instance.socket, "/health", { timeoutMs: 1500 }) });
+  if (discovery2.active.length > 0) {
+    checks.push({ name: "active-instances", status: "pass", message: `${discovery2.active.length} active opencode-lens instance(s)` });
+  } else {
+    checks.push({ name: "active-instances", status: "warn", message: "no active opencode-lens instances found" });
+  }
+  if (discovery2.removed.length > 0) {
+    checks.push({ name: "stale-registry", status: "warn", message: `removed ${discovery2.removed.length} stale registry/socket path(s)`, details: discovery2.removed });
+  }
+  if (discovery2.errors.length > 0) {
+    checks.push({ name: "discovery-errors", status: "warn", message: `${discovery2.errors.length} discovery error(s)`, details: discovery2.errors });
+  }
+  checks.push(await checkOpencodeTuiConfig());
+  checks.push(await checkHermesMcpConfig());
+  return {
+    version: LENS_VERSION,
+    node: process.version,
+    platform: `${process.platform}/${process.arch}`,
+    checks,
+    instances: discovery2.active.map(instanceSummary)
+  };
+}
+function checkNodeVersion() {
+  const major = Number(process.versions.node.split(".")[0]);
+  if (major >= 20)
+    return { name: "node-version", status: "pass", message: process.version };
+  return { name: "node-version", status: "fail", message: `${process.version} is too old; use Node.js 20+` };
+}
+async function checkCommandOnPath(command) {
+  for (const dir of (process.env.PATH ?? "").split(delimiter)) {
+    if (!dir)
+      continue;
+    const candidate = join3(dir, command);
+    if (await exists(candidate))
+      return { name: `${command}-on-path`, status: "pass", message: candidate };
+  }
+  const status = command === "bun" ? "warn" : "fail";
+  return { name: `${command}-on-path`, status, message: `${command} not found on PATH` };
+}
+async function checkDirectory(name, path) {
+  try {
+    const info = await stat(path);
+    if (info.isDirectory())
+      return { name, status: "pass", message: path };
+    return { name, status: "fail", message: `${path} exists but is not a directory` };
+  } catch {
+    return { name, status: "warn", message: `${path} does not exist yet` };
+  }
+}
+async function checkOpencodeTuiConfig() {
+  const path = join3(homeDir(), ".config", "opencode", "tui.json");
+  try {
+    const text = await readFile2(path, "utf8");
+    const parsed = JSON.parse(text);
+    const plugins = Array.isArray(parsed.plugin) ? parsed.plugin : [];
+    if (plugins.includes("opencode-lens"))
+      return { name: "opencode-tui-config", status: "pass", message: `${path} includes opencode-lens` };
+    return { name: "opencode-tui-config", status: "warn", message: `${path} does not include opencode-lens` };
+  } catch (error) {
+    return { name: "opencode-tui-config", status: "warn", message: `${path} not readable: ${errorMessage2(error)}` };
+  }
+}
+async function checkHermesMcpConfig() {
+  const path = join3(homeDir(), ".hermes", "config.yaml");
+  try {
+    const text = await readFile2(path, "utf8");
+    if (!text.includes("opencode-lens"))
+      return { name: "hermes-mcp-config", status: "warn", message: `${path} has no opencode-lens entry` };
+    if (text.includes("opencode-lens-mcp@latest") || text.includes("opencode-lens-mcp.js")) {
+      return { name: "hermes-mcp-config", status: "pass", message: `${path} contains opencode-lens MCP config` };
+    }
+    return { name: "hermes-mcp-config", status: "warn", message: `${path} mentions opencode-lens but command is not recognized` };
+  } catch (error) {
+    return { name: "hermes-mcp-config", status: "warn", message: `${path} not readable: ${errorMessage2(error)}` };
+  }
+}
+function instanceSummary(instance) {
+  return {
+    pid: instance.pid,
+    directory: instance.directory,
+    socket: instance.socket,
+    lens_version: instance.health.lens_version,
+    opencode_version: instance.health.opencode_version
+  };
+}
+function formatDoctorReport(report) {
+  const lines = [`opencode-lens doctor`, `version: ${report.version}`, `node: ${report.node}`, `platform: ${report.platform}`, "", "Checks:"];
+  for (const check of report.checks)
+    lines.push(`${icon(check.status)} ${check.name}: ${check.message}`);
+  lines.push("", "Instances:");
+  if (report.instances.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const instance of report.instances) {
+      lines.push(`- pid=${instance.pid} lens=${instance.lens_version} opencode=${instance.opencode_version} dir=${instance.directory}`);
+    }
+  }
+  return `${lines.join(`
+`)}
+`;
+}
+function icon(status) {
+  if (status === "pass")
+    return "[ok]";
+  if (status === "warn")
+    return "[warn]";
+  return "[fail]";
+}
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function homeDir() {
+  return process.env.HOME ?? process.env.USERPROFILE ?? ".";
+}
+function errorMessage2(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // src/index.ts
 async function main() {
+  const command = process.argv[2];
+  if (command === "doctor") {
+    await runDoctor({ json: process.argv.includes("--json") });
+    return;
+  }
   await createServer().run();
 }
 if (__require.main == __require.module) {

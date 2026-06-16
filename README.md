@@ -256,6 +256,8 @@ mcp_servers:
 
 Restart Hermes after changing MCP tools. MCP tools are registered when Hermes starts.
 
+See `docs/configuration.md` for systemd-safe Node configuration, `doctor` diagnostics, and watchdog tuning.
+
 ## Install The Hermes Skill
 
 Copy the skill into Hermes:
@@ -298,8 +300,12 @@ OPENCODE_LENS_SOCKET_DIR       defaults to $XDG_RUNTIME_DIR/opencode-lens or /ru
 OPENCODE_WATCH_STATE_FILE      defaults to ~/.hermes/opencode-watch-state.json
 OPENCODE_WATCH_LIST_FILE       defaults to ~/.hermes/opencode-watch-list.json
 OPENCODE_WATCH_LOCK_FILE       defaults to ~/.hermes/opencode-watch.lock
+OPENCODE_WATCH_RUNNING_NOTICE_AFTER_SEC      defaults to 600
+OPENCODE_WATCH_RUNNING_NOTICE_INTERVAL_SEC   defaults to 900
 OPENCODE_WATCH_SCRIPT          used by opencode-watch-loop.sh
 ```
+
+Permission alerts include a coarse `风险` label, and tracked running sessions emit periodic `仍在执行` reminders after the configured threshold.
 
 ## MCP Tool Highlights
 

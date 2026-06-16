@@ -18,6 +18,8 @@ LOCK_FILE = os.path.expanduser(os.environ.get("OPENCODE_WATCH_LOCK_FILE", "~/.he
 DIRECT_RELAY_LIMIT = 500
 COMPLETION_SUMMARY_LIMIT = 500
 DETAIL_LIMIT = 2000
+RUNNING_NOTICE_AFTER_SEC = int(os.environ.get("OPENCODE_WATCH_RUNNING_NOTICE_AFTER_SEC", "600"))
+RUNNING_NOTICE_INTERVAL_SEC = int(os.environ.get("OPENCODE_WATCH_RUNNING_NOTICE_INTERVAL_SEC", "900"))
 
 
 class UnixHTTPConnection(http.client.HTTPConnection):
@@ -248,6 +250,31 @@ def describe_permission_tool_part(part):
     return f"使用 {tool_name}: {clamp_detail(label)}" if label else f"使用 {tool_name}"
 
 
+def classify_permission_risk(operation):
+    text = str(operation or "").lower()
+    high_markers = (
+        "rm -rf",
+        "sudo",
+        "chmod",
+        "chown",
+        "mkfs",
+        "dd ",
+        "git push",
+        "delete",
+        "删除",
+        "应用补丁",
+    )
+    medium_markers = ("写入文件", "编辑文件", "批量编辑文件", "执行命令")
+    low_markers = ("读取文件", "搜索", "查找文件")
+    if any(marker in text for marker in high_markers):
+        return "高"
+    if any(marker in text for marker in medium_markers):
+        return "中"
+    if any(marker in text for marker in low_markers):
+        return "低"
+    return "中"
+
+
 def format_question_option(option):
     if not isinstance(option, dict):
         return clamp_detail(str(option))
@@ -261,6 +288,18 @@ def format_question_option(option):
 def clamp_detail(value, limit=DETAIL_LIMIT):
     text = str(value or "").strip()
     return text if len(text) <= limit else text[:limit] + "…"
+
+
+def format_duration(seconds):
+    seconds = max(0, int(seconds))
+    minutes = seconds // 60
+    if minutes < 1:
+        return f"{seconds} 秒"
+    hours = minutes // 60
+    if hours < 1:
+        return f"{minutes} 分钟"
+    remain = minutes % 60
+    return f"{hours} 小时 {remain} 分钟" if remain else f"{hours} 小时"
 
 
 def main():
@@ -279,6 +318,8 @@ def main():
         alerts = []
         curr = {}
         completed = []
+        running_notices = []
+        now_ts = int(time.time())
 
         for sock in sorted(glob.glob(os.path.join(SOCK_DIR, "*.sock"))):
             pid = os.path.basename(sock).replace(".sock", "")
@@ -300,10 +341,13 @@ def main():
                 if p.get("perm_id") != perm_id:
                     # Try to get what the permission is about
                     perm_desc = get_pending_permission_desc(sock, sid) if sid else None
-                    desc_line = f"   操作: {perm_desc or '权限详情暂未从消息中解析到，请查看 opencode TUI 中的权限弹窗'}\n"
+                    operation = perm_desc or "权限详情暂未从消息中解析到，请查看 opencode TUI 中的权限弹窗"
+                    desc_line = f"   操作: {operation}\n"
+                    risk_line = f"   风险: {classify_permission_risk(operation)}\n"
                     alerts.append(
                         f"⚠️「{title}」请求权限确认\n"
                         f"{desc_line}"
+                        f"{risk_line}"
                         f"   选项: allow once / allow always / deny"
                     )
                 curr.setdefault(pid, {})["perm_id"] = perm_id
@@ -359,9 +403,11 @@ def main():
                 if isinstance(prev_entry, dict):
                     prev_state = prev_entry.get("state")
                     prev_msg_ts = prev_entry.get("last_msg_completed", 0)
+                    prev_working_notice = prev_entry.get("last_working_notice", 0)
                 else:
                     prev_state = prev_entry
                     prev_msg_ts = 0
+                    prev_working_notice = 0
 
                 # For tracked sessions: check last assistant message completion time
                 # This catches cases where running→idle happens between two cron polls
@@ -370,13 +416,31 @@ def main():
                 if is_tracked:
                     summary_text, last_msg_ts = get_last_assistant_info(sock, sid_key)
 
+                added_at = watch_entry.get("added_at", 0) if watch_entry else 0
+                last_working_notice = prev_working_notice
+
+                if (
+                    is_tracked
+                    and state == "running"
+                    and added_at
+                    and now_ts - added_at >= RUNNING_NOTICE_AFTER_SEC
+                    and now_ts - prev_working_notice >= RUNNING_NOTICE_INTERVAL_SEC
+                ):
+                    last_working_notice = now_ts
+                    running_notices.append({
+                        "title": sinfo["title"],
+                        "duration": format_duration(now_ts - added_at),
+                    })
+
                 curr_states[sid_key] = (
-                    {"state": state, "last_msg_completed": last_msg_ts}
+                    {
+                        "state": state,
+                        "last_msg_completed": last_msg_ts,
+                        "last_working_notice": last_working_notice,
+                    }
                     if is_tracked
                     else state
                 )
-
-                added_at = watch_entry.get("added_at", 0) if watch_entry else 0
 
                 # Completion detection:
                 # Path 1: observed running → idle (standard)
@@ -406,6 +470,12 @@ def main():
             curr.setdefault(pid, {})["session_states"] = curr_states
 
         # Build completion alerts
+        for notice in running_notices:
+            alerts.append(
+                f"⏳「{notice['title']}」仍在执行\n"
+                f"   已运行: {notice['duration']}"
+            )
+
         for c in completed:
             alerts.append(
                 f"✅「{c['title']}」已完成\n"
