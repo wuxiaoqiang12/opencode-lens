@@ -88,7 +88,13 @@ There are two separate install surfaces:
 
 ### opencode TUI plugin
 
-Add the npm package name to `~/.config/opencode/tui.json`:
+Install the plugin with opencode's plugin installer:
+
+```bash
+opencode plugin opencode-lens --global --force
+```
+
+The installer should report `Detected server + tui targets` and add the package to both opencode's server plugin config and TUI plugin config. The resulting `~/.config/opencode/tui.json` should include:
 
 ```json
 {
@@ -97,9 +103,9 @@ Add the npm package name to `~/.config/opencode/tui.json`:
 }
 ```
 
-Restart opencode. opencode will resolve and cache the npm plugin package for the TUI runtime.
+Restart opencode. opencode resolves and caches npm plugin packages under `~/.cache/opencode/packages/`.
 
-You can also install the plugin manually, but this is usually unnecessary for normal opencode plugin usage:
+You can also install the plugin manually, but this is usually unnecessary for normal opencode plugin usage and does not replace the `tui.json` registration:
 
 ```bash
 npm install -g opencode-lens
@@ -329,7 +335,15 @@ Interactive questions are separate from permissions. They must be answered with 
 
 ## Troubleshooting
 
-- No instances: confirm `~/.config/opencode/tui.json` loads `./plugins/opencode-lens.js`, then restart opencode.
+- No instances: confirm `~/.config/opencode/tui.json` contains `"plugin": ["opencode-lens"]`, then restart opencode.
+- Stale opencode plugin cache: if `opencode plugin opencode-lens --global --force` reports only `Detected server target`, opencode may have cached an older npm package under `~/.cache/opencode/packages/opencode-lens@latest`. Remove that single cache directory, reinstall, and restart opencode:
+
+```bash
+rm -rf ~/.cache/opencode/packages/opencode-lens@latest
+opencode plugin opencode-lens --global --force
+```
+
+  The reinstall should report `Detected server + tui targets`. After restart, verify a socket appears under `$XDG_RUNTIME_DIR/opencode-lens/` or `/run/user/$UID/opencode-lens/`.
 - MCP tool missing: rebuild `packages/mcp`, then restart Hermes.
 - Plugin behavior did not change: restart the target opencode TUI process.
 - Prompt returns `409 session_busy`: inspect `tui_status`; the session may be running, waiting for a question, or waiting for permission.
