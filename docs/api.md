@@ -8,7 +8,7 @@ This document is the single source of truth for the plugin HTTP API consumed by 
 openapi: 3.1.0
 info:
   title: opencode-lens HTTP API
-  version: 0.1.1
+  version: 0.1.2
 servers:
   - url: http://x
     description: HTTP over Unix Domain Socket

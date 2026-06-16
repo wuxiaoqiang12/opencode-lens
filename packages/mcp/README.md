@@ -5,15 +5,21 @@ MCP server for [opencode-lens](https://github.com/wuxiaoqiang12/opencode-lens). 
 ## Install
 
 ```bash
-npm install -g opencode-lens-mcp
+npm install -g opencode-lens-mcp --registry=https://registry.npmjs.org/
 ```
+
+Use the official npm registry for fresh releases. Regional mirrors can lag behind and make `npx` report that the package is not found.
 
 ## Hermes Configuration
 
 ```yaml
 mcp_servers:
   opencode-lens:
-    command: opencode-lens-mcp
+    command: npx
+    args:
+      - -y
+      - --registry=https://registry.npmjs.org/
+      - opencode-lens-mcp
     enabled: true
     timeout: 30
     connect_timeout: 10

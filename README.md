@@ -115,6 +115,7 @@ mcp_servers:
     command: npx
     args:
       - -y
+      - --registry=https://registry.npmjs.org/
       - opencode-lens-mcp
     enabled: true
     timeout: 30
@@ -138,7 +139,7 @@ mcp_servers:
     connect_timeout: 10
 ```
 
-Restart Hermes after installing or updating the MCP package so the tool list is reloaded.
+Restart Hermes after installing or updating the MCP package so the tool list is reloaded. The `npx` example pins the official npm registry because regional mirrors can lag behind new `opencode-lens-mcp` releases.
 
 If you want both npm packages installed globally for local development, use:
 
@@ -182,7 +183,7 @@ bun --eval 'const plugin = await import("opencode-lens"); console.log(Object.key
 Validate the MCP server by asking it for its tool list:
 
 ```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify","version":"0.0.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' | npx opencode-lens-mcp
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify","version":"0.0.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' | npx -y --registry=https://registry.npmjs.org/ opencode-lens-mcp
 ```
 
 ## Development

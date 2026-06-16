@@ -29,7 +29,7 @@ function getSocketPath(pid = process.pid, options = {}) {
   return join(getLensRuntimeDir(options), `${pid}.sock`);
 }
 // ../shared/src/types.ts
-var LENS_VERSION = "0.1.1";
+var LENS_VERSION = "0.1.2";
 // src/events.ts
 class EventHub {
   capacity;

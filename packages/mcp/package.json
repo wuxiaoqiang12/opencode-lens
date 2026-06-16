@@ -1,6 +1,6 @@
 {
   "name": "opencode-lens-mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP server for discovering and controlling live opencode-lens TUI plugin instances.",
   "type": "module",
   "license": "MIT",

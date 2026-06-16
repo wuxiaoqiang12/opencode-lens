@@ -1,12 +1,13 @@
 {
   "name": "opencode-lens",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Observe and control your running opencode TUI sessions — an opencode plugin that exposes a local control API over a Unix socket.",
   "type": "module",
   "license": "MIT",
   "main": "dist/index.js",
   "exports": {
-    ".": "./dist/index.js"
+    ".": "./dist/index.js",
+    "./tui": "./dist/index.js"
   },
   "files": [
     "dist",

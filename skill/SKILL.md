@@ -26,6 +26,8 @@ Hermes registers tools with the server prefix `mcp_opencode_lens_` when the conf
 
 If the MCP tools are not present, stop and tell the user to reload or fix the Hermes MCP server configuration.
 
+When configuring Hermes to run this MCP server via `npx`, include `--registry=https://registry.npmjs.org/`. Regional npm mirrors can lag behind fresh `opencode-lens-mcp` releases and cause false `not found` failures.
+
 ## Discovery
 
 Use `mcp_opencode_lens_instances_list` first. It returns only compact instance metadata (PID/socket/directory/health), not historical session arrays. Internally keep the mapping from each instance's `pid`/`socket` to a stable display label (`实例 1`, `实例 2`, ...), and target instances by that mapping. When talking to the user, refer to instances by label only; do not surface the PID unless the user explicitly asks.
