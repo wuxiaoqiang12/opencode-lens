@@ -393,7 +393,9 @@ def main():
                 # Find watch entry for this session
                 watch_entry = None
                 for e in watch.get("entries", []):
-                    if e["session_id"] == sid_key and e.get("pid") == pid:
+                    e_sid = e.get("session_id") or e.get("session")
+                    e_pid = e.get("pid") or e.get("instance")
+                    if e_sid == sid_key and e_pid == pid:
                         watch_entry = e
                         break
                 is_tracked = watch_entry is not None
@@ -487,7 +489,8 @@ def main():
             completed_ids = {(c["pid"], c["session_id"]) for c in completed}
             watch["entries"] = [
                 e for e in watch.get("entries", [])
-                if (e.get("pid"), e.get("session_id")) not in completed_ids
+                if (e.get("pid") or e.get("instance"),
+                    e.get("session_id") or e.get("session")) not in completed_ids
             ]
             save_json(WATCH_FILE, watch)
 
