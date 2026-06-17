@@ -345,7 +345,7 @@ def main():
                     desc_line = f"   操作: {operation}\n"
                     risk_line = f"   风险: {classify_permission_risk(operation)}\n"
                     alerts.append(
-                        f"⚠️「{title}」请求权限确认\n"
+                        f"⚠️「{title}」请求权限确认 [PID:{pid}]\n"
                         f"{desc_line}"
                         f"{risk_line}"
                         f"   选项: allow once / allow always / deny"
@@ -372,7 +372,7 @@ def main():
                     q_summary = msg_summary or "   (无法获取问题详情)"
                 if p.get("q_req_id") != req_id:
                     alerts.append(
-                        f"❓「{title}」有交互问题等待回答\n{q_summary}"
+                        f"❓「{title}」有交互问题等待回答 [PID:{pid}]\n{q_summary}"
                     )
                 curr.setdefault(pid, {})["q_req_id"] = req_id
 

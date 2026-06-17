@@ -117,6 +117,11 @@ def test_format_duration_minutes_and_hours():
     assert watch.format_duration(7260) == "2 小时 1 分钟"
 
 
+def test_classify_permission_risk_default_medium():
+    watch = load_watchdog()
+    assert watch.classify_permission_risk("some unknown operation") == "中"
+
+
 if __name__ == "__main__":
     test_describe_pending_bash_permission()
     test_ignore_completed_tool_part()

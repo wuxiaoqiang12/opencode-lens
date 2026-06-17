@@ -7,7 +7,7 @@ description: Inspect/control live opencode instances via opencode-lens MCP. Use 
 
 Use this skill when the user asks to inspect, continue, abort, or approve work running in local opencode instances, or when the user mentions "opencode" in any context that involves controlling or monitoring instances. ALWAYS load this skill via `skill_view` BEFORE calling any `mcp_opencode_lens_` tool — skipping the skill load and jumping to MCP tools directly is a known error that violates the user's workflow preference.
 
-**Pitfall — never reverse-engineer the lens API via raw commands.** Do NOT use `curl --unix-socket`, `socat`, `nc`, or any other raw HTTP/shell tool to probe lens socket endpoints or discover available API routes. This was corrected explicitly by the user twice — ALL interaction with lens instances MUST go through the `mcp_opencode_lens_*` MCP tools. If you need to know what an endpoint returns, call the corresponding MCP tool. The watchdog script (`opencode-watch.py`) is the ONLY exception — it uses raw sockets internally, but you as the agent must never do so interactively. If the MCP tools are insufficient, tell the user; do not fall back to curl.
+**Pitfall — never reverse-engineer the lens API via raw commands.** Do NOT use `curl --unix-socket`, `socat`, `nc`, `execute_code`, or any other raw HTTP/shell/Python tool to probe lens socket endpoints, parse socket files, or discover available API routes. This was corrected explicitly by the user — ALL interaction with lens instances MUST go through the `mcp_opencode_lens_*` MCP tools. If you need to know what an endpoint returns, call the corresponding MCP tool. The watchdog script (`opencode-watch.py`) is the ONLY exception — it uses raw sockets internally, but you as the agent must never do so interactively. If the MCP tools are insufficient, tell the user; do not fall back to curl or execute_code.
 
 ## MCP First
 
@@ -24,15 +24,17 @@ Hermes registers tools with the server prefix `mcp_opencode_lens_` when the conf
 - `mcp_opencode_lens_session_status`, `mcp_opencode_lens_diff_get`, and `mcp_opencode_lens_todo_get` to inspect state.
 - `mcp_opencode_lens_events_wait` to wait for changes.
 
-If the MCP tools are not present, stop and tell the user to reload or fix the Hermes MCP server configuration.
+If the MCP tools are not present, do ONE quick diagnostic check — `read_file` on the last ~20 lines of `~/.hermes/logs/mcp-stderr.log` — to identify the cause, then immediately report to the user with an actionable fix (e.g. "MCP server fails to start: `bun` not found → install bun then restart gateway" or "no errors visible → try `sudo systemctl restart hermes-gateway.service`"). Do NOT go beyond this single log read into a multi-step debugging expedition (searching config files, grepping for socket paths, testing raw connections). One check, then report — the user can take it from there.
 
 When configuring Hermes to run this MCP server via `npx`, include `--registry=https://registry.npmjs.org/`. Regional npm mirrors can lag behind fresh `opencode-lens-mcp` releases and cause false `not found` failures.
 
 ## Discovery
 
-Use `mcp_opencode_lens_instances_list` first. It returns only compact instance metadata (PID/socket/directory/health), not historical session arrays. Internally keep the mapping from each instance's `pid`/`socket` to a stable display label (`实例 1`, `实例 2`, ...), and target instances by that mapping. When talking to the user, refer to instances by label only; do not surface the PID unless the user explicitly asks.
+Use `mcp_opencode_lens_instances_list` first. In opencode-lens v0.1.1 and newer it returns only compact instance metadata (PID/socket/directory/health), not historical session arrays. Always follow with `mcp_opencode_lens_tui_status` per instance for actual status.
 
 Only call `mcp_opencode_lens_sessions_list` when the user explicitly asks to list/browse historical sessions for a specific instance. Pass a small `limit` (default 20; lower if enough). Do not use it for normal status overview.
+
+Internally keep the mapping from each instance's `pid`/`socket` to a stable display label (`实例 1`, `实例 2`, ...), and target instances by that mapping. When talking to the user, refer to instances by label only; do not surface the PID unless the user explicitly asks.
 
 ## Status Overview
 
@@ -59,9 +61,17 @@ Rules:
 
 When you send a prompt via `prompt_send` (assigning work to a session) or the user explicitly asks to track a session, add it to the watch list so the watchdog notifies on completion.
 
-**Watch list file:** `~/.hermes/opencode-watch-list.json` (JSON array of `{pid, session_id, title, socket, added_at}`).
+**Watch list file:** `~/.hermes/opencode-watch-list.json` (JSON object with `entries` array).
+
+**Field name dual convention — CRITICAL pitfall:** Entries created by Hermes (via `write_file`) typically use `{instance, session, title}`, while the watchdog script internally expects `{pid, session_id, title}`. This mismatch caused a `KeyError: 'session_id'` crash. When writing watch list entries OR patching the script, ALWAYS use the fallback pattern: `e.get("session_id") or e.get("session")` and `e.get("pid") or e.get("instance")`. Never use bare `e["session_id"]` indexing.
 
 After every `prompt_send`, append the target session to the watch list using `write_file` (read current → add entry → write back). Match the entry to the instance PID and session ID from the `prompt_send` call. The cron watchdog polls every 1 minute; when the session transitions from `running` → `idle`, it outputs a `✅` completion alert with a brief summary of the last assistant message, delivered directly to the user's chat.
+
+**Watch list redundancy — do NOT add to watch list when you will actively poll the result yourself.** If you send a prompt and then immediately poll `session_status` + `messages_read` to relay the result to the user in the same turn, the watchdog completion notification is redundant noise. Only add to the watch list when: (a) the user explicitly asks to track, or (b) you send a prompt but will NOT be actively polling its result (e.g. fire-and-forget delegation).
+
+**Do NOT write your own completion-tracking or notification code.** The watchdog cron script already detects session completion, permission prompts, and question prompts — it is the sole mechanism for autonomous push notifications. Writing custom Python/shell code via `execute_code` or `terminal` to replicate this (e.g. polling loops, state files) duplicates existing functionality and was explicitly rejected by the user ("watchdog脚本本身不是有这个能力了吗？为什么要自己再写呢"). If you need tracking, use the watch list file. If you need the result now, poll it yourself in-turn. Never build a third path.
+
+**Pitfall — the "neither" trap:** After `prompt_send`, you must do exactly ONE of: (a) actively poll the result in the same turn and relay it to the user, or (b) add the session to the watch list so the cron watchdog catches completion. Doing *neither* — sending a prompt, telling the user "完成后转达", then ending the turn without polling or watch-listing — leaves the result stranded and forces the user to ask "还没完成吗？" The decision must be made immediately after `prompt_send` returns `accepted`, before the turn ends.
 
 When the user explicitly says "跟踪 session X" / "track session X", add it the same way.
 
@@ -140,6 +150,8 @@ Only run abort or permission response commands when the user explicitly asks for
 
 **`permission_respond` accepts `allow`, `always`, or `deny`.** Under the hood the lens plugin translates these to the opencode SDK's `permission.reply` values: `allow` → `once` (approve this request), `always` → `always` (approve and remember for the session), `deny` → `reject`. This now correctly resolves the TUI permission prompt (the earlier bug — where the dialog stayed stuck on `waiting-permission` despite `ok: true` — was caused by sending the wrong values `allow`/`deny` straight to the SDK, which only understands `once`/`always`/`reject`). After approving/denying, the TUI should leave `waiting-permission`. `mcp_opencode_lens_question_reject` (dismissing an interactive question) is likewise high-risk — only use it when the user explicitly wants to decline the question.
 
+**CRITICAL — identify the correct instance before responding to a permission/question request.** When the user says "allow always", "allow", "deny", or similar brief replies, do NOT assume it's the instance you most recently interacted with. The watchdog notification that prompted the user's reply includes a `[PID:<pid>]` tag — use this PID as the authoritative routing key: match it against `mcp_opencode_lens_instances_list` to find the correct instance, then call `mcp_opencode_lens_tui_status` on THAT instance to get the `permission_id`/question `request_id`, and submit via `permission_respond`/`question_respond`. Only if there is no PID in the conversation context (e.g. you detected the permission yourself during an active turn), fall back to scanning ALL instances for `needs_user: true` + `needs_user_kind: "permission"`. Guessing the wrong instance frustrates the user ("你要找好对应实例啊").
+
 **When bridging a permission prompt to the Hermes user, always present exactly three choices:** `allow once`, `allow always`, and `deny`. Explain the requested operation briefly, then ask the user to choose one of those three. Map `allow once` to `permission_respond` `response: "allow"`, `allow always` to `response: "always"`, and `deny` to `response: "deny"`. Do not collapse the question into a yes/no prompt, because users need to distinguish one-time approval from remembered approval.
 
 **Triggering permission prompts for testing:** To exercise `permission_respond`, the target instance must have its opencode `permission` rules configured to `"ask"` (not `"allow"`) for the operation you're triggering. Auto-allow instances (common for test/scratch instances rooted at `~` or `/tmp`) never raise a permission dialog — the tool just runs and returns. Two things that are NOT opencode permission dialogs: (1) a bash command failing with OS-level "permission denied" (e.g. writing to `/opt` without sudo) is a normal tool error, not a permission prompt; (2) the `write`/`edit` tools writing outside the project directory may still be auto-allowed depending on config. Only `tui_status` showing `needs_user: true` with `needs_user_kind: "permission"` (or a `waiting-permission` state) indicates a real dialog you can respond to with `permission_respond`. If no instance has `"ask"` rules, tell the user — you cannot fabricate a permission prompt from an auto-allow config.
@@ -164,19 +176,89 @@ Create a `no_agent=True` cron job with `script="scripts/opencode-watch.py"` and 
 
 **Completion detection has two paths** (as of 2026-06-15 fix): (1) the standard `running → idle` state transition observed across two cron polls; (2) a fallback that checks the last assistant message's `time.completed` timestamp against the watch list entry's `added_at` — if the message completed after tracking started and is newer than what was seen in the previous poll, the session is reported as complete. Path 2 catches the common case where the model finishes between two 1-minute cron polls (the running state is never observed). The state file stores `{state, last_msg_completed}` per tracked session (dict format); old string-format entries are handled with backward-compatible `isinstance` checks.
 
-**How the script works:** It reads the lens HTTP API directly via unix sockets (`/tui/status` on each `*.sock` in `$XDG_RUNTIME_DIR/opencode-lens/`), checks `needs_user` + `needs_user_kind`, and detects `running` → `idle` transitions for tracked sessions. For permission alerts, it also fetches the pending tool call from `/session/<id>/messages?limit=2` to describe what operation needs approval (e.g. "执行命令: git push"). It prints alert lines starting with `⚠️` (permission), `❓` (question), or `✅` (completion). Empty stdout = silent.
+**How the script works:** It reads the lens HTTP API directly via unix sockets (`/tui/status` on each `*.sock` in `$XDG_RUNTIME_DIR/opencode-lens/`), checks `needs_user` + `needs_user_kind`, and detects `running` → `idle` transitions for tracked sessions. For permission alerts, it fetches the pending tool call from `/session/<id>/messages?limit=2` to describe what operation needs approval (e.g. "执行命令: git push"). For question alerts, it first tries `tui_status.status.question`, and if that's empty (the question details are not in the tui_status payload), falls back to fetching the pending `question` tool call from `/session/<id>/messages?limit=2` via `get_pending_question_desc()` to extract the question text and option labels. Without this fallback, question alerts would show "详情未知" with no usable information. It prints alert lines starting with `⚠️` (permission), `❓` (question), or `✅` (completion). Empty stdout = silent.
 
-**Alert format — human-readable, NO technical IDs:** The watchdog alert text is what the user sees directly. NEVER include `permission_id`, `session_id`, `request_id`, or PID in the alert output. The format must be:
-- Permission: `⚠️「<session title>」请求权限确认\n   操作: <human-readable description>\n   选项: allow once / allow always / deny`
-- Question: `❓「<session title>」有交互问题等待回答\n   Q: <question>\n   选项: A, B, C`
+**Alert format — human-readable with PID tag for instance routing:** The watchdog alert text is what the user sees directly. Permission and question alerts include a `[PID:<pid>]` tag so you can route the user's reply to the correct instance. The format is:
+- Permission: `⚠️「<session title>」请求权限确认 [PID:<pid>]\n   操作: <human-readable description>\n   风险: <风险等级>\n   选项: allow once / allow always / deny`
+- Question: `❓「<session title>」有交互问题等待回答 [PID:<pid>]\n   Q: <question>\n   选项: A, B, C`
 - Completion: `✅「<session title>」已完成\n   摘要: <brief summary>`
-The script fetches the pending tool call's description from messages (e.g. "执行命令: git push origin main", "write 文件: /path/to/file") to populate the `操作` line.
+- Completion summaries are truncated at 500 chars; if longer, an extractive summary is generated. This keeps WeChat notifications concise — the user can ask Hermes for a full summary.
+The script fetches the pending tool call's description from messages (e.g. "执行命令: git push origin main", "读取文件: /path/to/file") to populate the `操作` line, and classifies risk as 低/中/高. For question alerts, the script fetches question text and options from messages via `get_pending_question_desc()` as a fallback when `tui_status.status.question` is empty.
 
-**When you receive a watchdog alert:** Follow the permission bridging or question bridging sections above — read the details from `tui_status`, present choices to the user via `clarify`, and submit via `permission_respond` or `question_respond`. The user typically responds with a brief instruction like "allow always" or "给他 allow always" — map this to `permission_respond` with `response: "always"` and act immediately without further clarification.
+**When you receive a watchdog alert and the user replies with a permission/question response:** The watchdog notification includes a `[PID:<pid>]` tag. Use this PID to identify the correct instance — match it against `mcp_opencode_lens_instances_list` output to find the instance label (实例 N). Then call `mcp_opencode_lens_tui_status` on THAT instance to get the `permission_id` or question `request_id`, and submit via `permission_respond` or `question_respond`. Do NOT scan instances blindly or guess — the PID in the alert is the authoritative routing key. If the PID no longer appears in `instances_list` (process died), tell the user the instance is gone and the permission may have auto-resolved.
+
+## Competitive Analysis
+
+For comparison with `cli-wechat-bridge` (WeChat→CLI bridge) and specific improvement ideas for opencode-lens (doctor command, watchdog event quality, file/attachment support, risk grading, version consistency), see `references/cli-wechat-bridge-comparison.md`.
 
 ## Future Architecture: GUI Support & ACP
 
 For analysis of extending opencode-lens to support opencode's GUI app, and a comparison of MCP+TUI plugin vs ACP (Agent Communication Protocol), see `references/gui-and-acp-roadmap.md`. Key takeaway: ACP and MCP+TUI are complementary — ACP suits headless agent backend scenarios; MCP+TUI suits controlling user's running instances. The recommended evolution is a host adapter architecture with a capability matrix.
+
+## Launching New Instances via Zellij
+
+When the user **explicitly** asks to use zellij to open a new tab, a new instance, or switch to a specific session in a new tab (e.g. "在 zellij 中新开一个实例", "新开一个 tab 切换到某个 session"), follow ALL rules below. If the user did not mention zellij, prefer `tui_session_switch` or `session_create` + `prompt_send` on existing instances instead — do not spawn new opencode processes unless asked.
+
+### Rule 1 — Never block the terminal tool with a TUI program (CRITICAL)
+
+opencode is an interactive TUI program. Running `opencode -s <session_id>` in the foreground of a `terminal` tool call **will never return** — the terminal tool waits 300 seconds, then reports `BLOCKED: Command timed out`. The opencode process may start, but Hermes cannot continue the workflow after the timeout.
+
+**The `terminal` tool must return immediately.** Use one of these patterns:
+
+**Pattern A — two-step (recommended):** open the tab first, then inject the command into it:
+```bash
+# Step 1: open a new tab (returns instantly — it is an action command, not a foreground process)
+zellij --session <zellij_session_name> action new-tab --name "<tab title>" --cwd <working_dir>
+
+# Step 2: type the opencode launch command into the new tab's terminal
+zellij --session <zellij_session_name> action write-chars "opencode -s <session_id>\n"
+```
+
+**Pattern B — detached background launch:**
+```bash
+nohup opencode -s <session_id> --cwd <working_dir> >/dev/null 2>&1 &
+```
+
+**NEVER do this** — it blocks the terminal tool for 300 seconds:
+```bash
+# WRONG — opencode TUI never exits, terminal tool times out
+opencode -s <session_id>
+# WRONG — zellij run waits for the command to finish
+zellij run -- opencode -s <session_id>
+```
+
+### Rule 2 — Never attach to a session that is currently running (CRITICAL)
+
+Before launching `opencode -s <session_id>`, ALWAYS check the session state first:
+
+1. Call `mcp_opencode_lens_tui_status` on the instance that owns the session.
+2. Find the target session's `state`.
+3. If `state` is `running`: **STOP.** Do NOT launch `opencode -s <session_id>`.
+
+Two opencode processes attaching the same `running` session conflict: the new process's TUI initialization deadlocks (threads stuck on `futex_wait`), the lens plugin never registers a socket, and the new instance becomes an invisible zombie — no lens control, no session switching, no way to recover except `kill`.
+
+**What to do instead when the session is `running`:**
+- If the user wants to **see/monitor** it: use `mcp_opencode_lens_tui_session_switch` on an existing instance — this switches the visible TUI without spawning a new process.
+- If the user wants to **interact** with it: wait for it to become `idle`, then launch.
+- If the user wants a **fresh** session: use `mcp_opencode_lens_session_create` (optionally with `switch_tui: true`) on an existing instance — no zellij needed.
+
+### Post-launch verification
+
+After launching a new opencode instance via zellij:
+
+1. Wait 10 seconds, then poll `mcp_opencode_lens_instances_list` to confirm the new PID appeared.
+2. If the new PID does NOT appear after 60 seconds, the launch failed silently (common when Rule 2 was violated). Do NOT retry the launch — instead report to the user that the new instance did not register and suggest checking the tab manually.
+3. Once visible, use `mcp_opencode_lens_tui_status` on the new instance to confirm it is healthy.
+
+### Environment setup
+
+The opencode binary is not in non-interactive shell PATH. Prepend it before launching:
+```bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export PATH="/usr/local/lib/node_modules/opencode-ai/node_modules/opencode-linux-x64/bin:$PATH"
+```
+
+The new opencode process gets a new PID; the lens plugin auto-registers and creates a new `<pid>.sock` in `$XDG_RUNTIME_DIR/opencode-lens/`.
 
 ## Per-Message Model Selection
 
